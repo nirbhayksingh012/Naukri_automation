@@ -29,7 +29,8 @@ let config = {
   lastRunStatus: 'idle',
   lastRunTime: null,
   nextRunTime: null,
-  currentHeadline: ''
+  currentHeadline: '',
+  businessHoursOnly: true
 };
 
 let logs = [];
@@ -62,6 +63,9 @@ if (process.env.MIN_INTERVAL) {
 }
 if (process.env.MAX_INTERVAL) {
   config.maxInterval = parseInt(process.env.MAX_INTERVAL) || config.maxInterval;
+}
+if (process.env.BUSINESS_HOURS_ONLY !== undefined) {
+  config.businessHoursOnly = process.env.BUSINESS_HOURS_ONLY === 'true';
 }
 
 config.nextRunTime = null;
@@ -104,6 +108,17 @@ function logMessage(text, type = 'info') {
   });
 }
 
+function isWorkHours() {
+  const istDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
+  const day = istDate.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const hour = istDate.getUTCHours(); // 0 to 23
+
+  const isWeekend = (day === 0 || day === 6);
+  const isBusinessHour = (hour >= 9 && hour < 18); // 9:00 AM to 5:59 PM
+
+  return !isWeekend && isBusinessHour;
+}
+
 // Scheduler Logic
 function scheduleNextRun() {
   if (schedulerTimeout) {
@@ -114,6 +129,21 @@ function scheduleNextRun() {
   if (!config.enabled) {
     config.nextRunTime = null;
     saveConfig();
+    return;
+  }
+
+  // Check if we are within business hours (if enabled)
+  if (config.businessHoursOnly && !isWorkHours()) {
+    const checkIntervalMinutes = 30;
+    const targetTime = new Date(Date.now() + checkIntervalMinutes * 60 * 1000);
+    config.nextRunTime = targetTime.toISOString();
+    saveConfig();
+
+    logMessage(`Outside Indian business hours (9 AM - 6 PM IST, Mon-Fri). Autopilot sleeping for 30 minutes (next check at ${targetTime.toLocaleTimeString()}).`, 'info');
+
+    schedulerTimeout = setTimeout(() => {
+      scheduleNextRun();
+    }, checkIntervalMinutes * 60 * 1000);
     return;
   }
 
@@ -225,7 +255,7 @@ app.get('/api/status', (req, res) => {
 
 // Update schedule interval settings
 app.post('/api/settings', (req, res) => {
-  const { minInterval, maxInterval } = req.body;
+  const { minInterval, maxInterval, businessHoursOnly } = req.body;
   
   const min = parseInt(minInterval);
   const max = parseInt(maxInterval);
@@ -236,13 +266,18 @@ app.post('/api/settings', (req, res) => {
 
   config.minInterval = min;
   config.maxInterval = max;
+  
+  if (businessHoursOnly !== undefined) {
+    config.businessHoursOnly = !!businessHoursOnly;
+  }
+  
   saveConfig();
   
-  logMessage(`Settings updated: Refresh interval set to range ${min}-${max} minutes.`, 'info');
+  logMessage(`Settings updated: Refresh interval set to range ${min}-${max} minutes. Business Hours Only: ${config.businessHoursOnly}`, 'info');
   
   // If scheduler is active, re-schedule with new parameters
   if (config.enabled) {
-    logMessage('Autopilot schedule re-calculating under new intervals...', 'info');
+    logMessage('Autopilot schedule re-calculating under new settings...', 'info');
     scheduleNextRun();
   }
 

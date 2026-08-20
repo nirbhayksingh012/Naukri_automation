@@ -23,6 +23,7 @@ const btnToggleScroll = document.getElementById('btn-toggle-scroll');
 const settingsForm = document.getElementById('settings-form');
 const minIntervalInput = document.getElementById('min-interval');
 const maxIntervalInput = document.getElementById('max-interval');
+const businessHoursOnlyInput = document.getElementById('business-hours-only');
 const consoleOutput = document.getElementById('console-output');
 
 const btnExportSession = document.getElementById('btn-export-session');
@@ -216,6 +217,9 @@ function updateUI() {
   if (document.activeElement !== maxIntervalInput) {
     maxIntervalInput.value = appConfig.maxInterval || 30;
   }
+  if (document.activeElement !== businessHoursOnlyInput) {
+    businessHoursOnlyInput.checked = appConfig.businessHoursOnly !== false;
+  }
 
   // Start/Stop countdown visual loop
   startCountdownLoop();
@@ -319,6 +323,7 @@ async function saveSettings(e) {
   
   const minInterval = parseInt(minIntervalInput.value);
   const maxInterval = parseInt(maxIntervalInput.value);
+  const businessHoursOnly = businessHoursOnlyInput.checked;
 
   if (minInterval > maxInterval) {
     alert('Min delay cannot be larger than Max delay!');
@@ -331,7 +336,7 @@ async function saveSettings(e) {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ minInterval, maxInterval })
+      body: JSON.stringify({ minInterval, maxInterval, businessHoursOnly })
     });
     
     const data = await res.json();
@@ -340,7 +345,7 @@ async function saveSettings(e) {
       updateUI();
       appendLog({
         time: new Date().toLocaleTimeString(),
-        text: `SYSTEM: Updated random range limits to [${minInterval} min - ${maxInterval} min]`,
+        text: `SYSTEM: Updated settings. Range: [${minInterval}-${maxInterval} min]. Business Hours Only: ${businessHoursOnly}`,
         type: 'info'
       });
     } else {
