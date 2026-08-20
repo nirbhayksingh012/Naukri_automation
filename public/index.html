@@ -123,6 +123,29 @@
             </button>
           </form>
         </div>
+
+        <div class="card session-card">
+          <div class="card-header">
+            <h3>Cloud Session Sync</h3>
+            <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.2 15c.7-1.2 1-2.5.7-3.9-.6-3-3.1-5.2-6.1-5.1-1 0-2 .3-2.9.8M3 12a9 9 0 0 0 15 6.7M3 12h6M18 12h-6"/></svg>
+          </div>
+          <p class="helper-text">
+            For 24/7 cloud hosting (Render/Koyeb), export your active local session and import it to the cloud instance.
+          </p>
+          <div class="session-actions-grid">
+            <button id="btn-export-session" class="btn btn-secondary btn-full">
+              <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Export Session</span>
+            </button>
+            <div class="import-container">
+              <label for="session-file-input" class="btn btn-secondary btn-full btn-upload" id="lbl-session-upload">
+                <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Import Session</span>
+              </label>
+              <input type="file" id="session-file-input" accept=".json" style="display: none;">
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- Logs panel -->

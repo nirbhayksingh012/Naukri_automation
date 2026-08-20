@@ -1,11 +1,22 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { updateProfile, launchLoginHelper } = require('./automation');
+const { updateProfile, launchLoginHelper, exportSessionState } = require('./automation');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const STATE_FILE = path.join(__dirname, 'state.json');
+
+// Pre-load session from environment variable if available (for cloud hosting)
+if (process.env.NAUKRI_SESSION_JSON) {
+  try {
+    fs.writeFileSync(STATE_FILE, process.env.NAUKRI_SESSION_JSON, 'utf8');
+    console.log('[SUCCESS] Successfully loaded session state from environment variable NAUKRI_SESSION_JSON.');
+  } catch (err) {
+    console.error('[ERROR] Failed to write session state from NAUKRI_SESSION_JSON:', err);
+  }
+}
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -31,15 +42,31 @@ if (fs.existsSync(CONFIG_FILE)) {
   try {
     const data = fs.readFileSync(CONFIG_FILE, 'utf8');
     config = { ...config, ...JSON.parse(data) };
-    // On start, ensure background is turned off or clean
-    config.nextRunTime = null;
-    config.enabled = false;
   } catch (err) {
     console.error('Error reading config file, using defaults.', err);
   }
 } else {
   saveConfig();
 }
+
+// Environmental variables take precedence (vital for cloud hosting)
+if (process.env.AUTOPILOT_ENABLED !== undefined) {
+  config.enabled = process.env.AUTOPILOT_ENABLED === 'true';
+} else {
+  // On local start, ensure autopilot is initially disabled unless env specifies it
+  config.enabled = false;
+}
+
+if (process.env.MIN_INTERVAL) {
+  config.minInterval = parseInt(process.env.MIN_INTERVAL) || config.minInterval;
+}
+if (process.env.MAX_INTERVAL) {
+  config.maxInterval = parseInt(process.env.MAX_INTERVAL) || config.maxInterval;
+}
+
+config.nextRunTime = null;
+config.lastRunStatus = 'idle';
+saveConfig();
 
 function saveConfig() {
   try {
@@ -321,8 +348,64 @@ app.post('/api/login-helper', (req, res) => {
   res.json({ success: true, message: 'Visual browser launched.' });
 });
 
+// Export browser session state
+app.post('/api/session/export', async (req, res) => {
+  if (isUpdating) {
+    return res.status(503).json({ error: 'Automation is currently in progress. Please wait.' });
+  }
+
+  isUpdating = true;
+  config.lastRunStatus = 'exporting_session';
+  broadcastStatus();
+
+  try {
+    const sessionState = await exportSessionState(logMessage);
+    
+    // Save to state.json locally too
+    fs.writeFileSync(STATE_FILE, JSON.stringify(sessionState, null, 2), 'utf8');
+    
+    logMessage('Session state exported successfully.', 'success');
+    res.json({ success: true, sessionState });
+  } catch (err) {
+    logMessage(`Session export failed: ${err.message}`, 'error');
+    res.status(500).json({ error: err.message });
+  } finally {
+    isUpdating = false;
+    config.lastRunStatus = 'idle';
+    saveConfig();
+    broadcastStatus();
+  }
+});
+
+// Import browser session state
+app.post('/api/session/import', async (req, res) => {
+  if (isUpdating) {
+    return res.status(503).json({ error: 'Automation is currently in progress. Please wait.' });
+  }
+
+  const { sessionState } = req.body;
+  if (!sessionState || typeof sessionState !== 'object') {
+    return res.status(400).json({ error: 'Invalid session state format. Must be JSON.' });
+  }
+
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(sessionState, null, 2), 'utf8');
+    logMessage('New session state imported successfully! Pre-loaded state.json.', 'success');
+    res.json({ success: true, message: 'Session imported successfully.' });
+  } catch (err) {
+    logMessage(`Session import failed: ${err.message}`, 'error');
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Start express server
 app.listen(PORT, () => {
   logMessage(`Naukri Auto-Updater Service running at http://localhost:${PORT}`, 'success');
   logMessage('Open the link above in your web browser to access the control panel dashboard.', 'info');
+
+  // Auto-start scheduler if enabled on startup
+  if (config.enabled) {
+    logMessage('Autopilot is enabled on startup. Initializing background scheduler...', 'info');
+    scheduleNextRun();
+  }
 });

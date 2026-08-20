@@ -2,5 +2,6 @@ node_modules/
 user_data/
 diagnostic_error.png
 config.json
+state.json
 .DS_Store
 npm-debug.log*

@@ -25,6 +25,10 @@ const minIntervalInput = document.getElementById('min-interval');
 const maxIntervalInput = document.getElementById('max-interval');
 const consoleOutput = document.getElementById('console-output');
 
+const btnExportSession = document.getElementById('btn-export-session');
+const sessionFileInput = document.getElementById('session-file-input');
+const lblSessionUpload = document.getElementById('lbl-session-upload');
+
 // Initial Setup
 document.addEventListener('DOMContentLoaded', () => {
   setupSSE();
@@ -47,6 +51,8 @@ function setupEventListeners() {
   });
   
   settingsForm.addEventListener('submit', saveSettings);
+  btnExportSession.addEventListener('click', exportSession);
+  sessionFileInput.addEventListener('change', importSession);
 }
 
 // Connect to Server-Sent Events for logs and status
@@ -118,24 +124,36 @@ function updateUI() {
     // Disable actions during execution
     btnRunNow.disabled = true;
     btnLoginHelper.disabled = true;
+    btnExportSession.disabled = true;
+    lblSessionUpload.classList.add('disabled');
+    sessionFileInput.disabled = true;
   } else if (appConfig.enabled) {
     badgeSystemStatus.classList.add('status-active');
     statusBadgeText.textContent = 'Autopilot Active';
     
     btnRunNow.disabled = false;
     btnLoginHelper.disabled = false;
+    btnExportSession.disabled = false;
+    lblSessionUpload.classList.remove('disabled');
+    sessionFileInput.disabled = false;
   } else if (appConfig.lastRunStatus === 'auth_required') {
     badgeSystemStatus.classList.add('status-warning');
     statusBadgeText.textContent = 'Auth Required';
     
     btnRunNow.disabled = false;
     btnLoginHelper.disabled = false;
+    btnExportSession.disabled = false;
+    lblSessionUpload.classList.remove('disabled');
+    sessionFileInput.disabled = false;
   } else {
     badgeSystemStatus.classList.add('status-idle');
     statusBadgeText.textContent = 'Autopilot Idle';
     
     btnRunNow.disabled = false;
     btnLoginHelper.disabled = false;
+    btnExportSession.disabled = false;
+    lblSessionUpload.classList.remove('disabled');
+    sessionFileInput.disabled = false;
   }
 
   // Update labels
@@ -331,4 +349,109 @@ async function saveSettings(e) {
   } catch (err) {
     console.error('Failed to save settings', err);
   }
+}
+
+// Export browser session state
+async function exportSession() {
+  btnExportSession.disabled = true;
+  appendLog({
+    time: new Date().toLocaleTimeString(),
+    text: 'SYSTEM: Requesting browser session export...',
+    type: 'info'
+  });
+
+  try {
+    const res = await fetch('/api/session/export', { method: 'POST' });
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Server error exporting session');
+    }
+
+    const data = await res.json();
+    if (data.success && data.sessionState) {
+      // Trigger a client-side download of the state JSON file
+      const dataStr = JSON.stringify(data.sessionState, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      
+      const tempLink = document.createElement('a');
+      tempLink.href = url;
+      tempLink.download = 'state.json';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      document.body.removeChild(tempLink);
+      URL.revokeObjectURL(url);
+
+      appendLog({
+        time: new Date().toLocaleTimeString(),
+        text: 'SYSTEM: Session state exported and downloaded as state.json successfully!',
+        type: 'success'
+      });
+    } else {
+      throw new Error('No session state returned from server.');
+    }
+  } catch (err) {
+    console.error('Session export failed', err);
+    appendLog({
+      time: new Date().toLocaleTimeString(),
+      text: `SYSTEM: Session export failed: ${err.message}`,
+      type: 'error'
+    });
+    alert(`Failed to export session: ${err.message}`);
+  } finally {
+    btnExportSession.disabled = false;
+  }
+}
+
+// Import browser session state
+function importSession(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (event) => {
+    try {
+      const sessionState = JSON.parse(event.target.result);
+      
+      appendLog({
+        time: new Date().toLocaleTimeString(),
+        text: `SYSTEM: Uploading imported session file "${file.name}"...`,
+        type: 'info'
+      });
+
+      const res = await fetch('/api/session/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ sessionState })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Server error importing session');
+      }
+
+      const data = await res.json();
+      appendLog({
+        time: new Date().toLocaleTimeString(),
+        text: 'SYSTEM: Session state imported and saved successfully!',
+        type: 'success'
+      });
+      alert('Session imported successfully! The application will now use this active session.');
+    } catch (err) {
+      console.error('Session import failed', err);
+      appendLog({
+        time: new Date().toLocaleTimeString(),
+        text: `SYSTEM: Session import failed: ${err.message}`,
+        type: 'error'
+      });
+      alert(`Failed to import session: ${err.message}. Please make sure it is a valid state.json file.`);
+    } finally {
+      // Clear input so file change event triggers next time even for same file
+      sessionFileInput.value = '';
+    }
+  };
+  
+  reader.readAsText(file);
 }

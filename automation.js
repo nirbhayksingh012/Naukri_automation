@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const USER_DATA_DIR = path.join(__dirname, 'user_data');
+const STATE_FILE = path.join(__dirname, 'state.json');
 
 /**
  * Perform the Naukri profile update.
@@ -33,12 +34,19 @@ async function updateProfile(log, headless = true) {
       launchArgs.push('--window-size=1280,800');
     }
 
-    browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    const launchOptions = {
       headless: false, // Always run headful to bypass Akamai bot detection
       viewport: { width: 1280, height: 800 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       args: launchArgs
-    });
+    };
+
+    if (fs.existsSync(STATE_FILE)) {
+      log('Pre-loading session cookies from state.json...');
+      launchOptions.storageState = STATE_FILE;
+    }
+
+    browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
 
     const pages = browserContext.pages();
     const page = pages.length > 0 ? pages[0] : await browserContext.newPage();
@@ -153,6 +161,15 @@ async function updateProfile(log, headless = true) {
         await page.waitForTimeout(3000);
       }
 
+      // Save storage state to keep cookies fresh
+      try {
+        const state = await browserContext.storageState();
+        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+        log('Session state updated in state.json.', 'info');
+      } catch (saveErr) {
+        log(`Warning: Failed to save updated session state: ${saveErr.message}`, 'warning');
+      }
+
       await browserContext.close();
       log('Browser closed. Profile refresh sequence complete.', 'info');
       
@@ -258,6 +275,15 @@ async function updateProfile(log, headless = true) {
         await page.waitForTimeout(3000);
       }
 
+      // Save storage state to keep cookies fresh
+      try {
+        const state = await browserContext.storageState();
+        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+        log('Session state updated in state.json.', 'info');
+      } catch (saveErr) {
+        log(`Warning: Failed to save updated session state: ${saveErr.message}`, 'warning');
+      }
+
       await browserContext.close();
       log('Browser closed. Profile refresh sequence complete.', 'info');
       return { success: true, headline: newHeadline };
@@ -349,7 +375,46 @@ async function launchLoginHelper(log, onLoginSuccess, onClose) {
   }
 }
 
+/**
+ * Exports the active session state from the local user_data directory.
+ * @param {Function} log - Callback to stream status back
+ * @returns {Promise<Object>} - The storage state object
+ */
+async function exportSessionState(log) {
+  let browserContext = null;
+  try {
+    log('Launching headless browser to extract storage state...');
+    
+    if (!fs.existsSync(USER_DATA_DIR)) {
+      throw new Error('No local user data directory found. Please log in first.');
+    }
+
+    browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
+      headless: true,
+      viewport: { width: 1280, height: 800 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      args: ['--disable-blink-features=AutomationControlled']
+    });
+
+    log('Extracting session cookies and storage state...');
+    const state = await browserContext.storageState();
+    
+    await browserContext.close();
+    log('Session state extracted successfully!', 'success');
+    return state;
+  } catch (error) {
+    log(`EXPORT EXCEPTION: ${error.message}`, 'error');
+    if (browserContext) {
+      try {
+        await browserContext.close();
+      } catch (e) {}
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   updateProfile,
-  launchLoginHelper
+  launchLoginHelper,
+  exportSessionState
 };
