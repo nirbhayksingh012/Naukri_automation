@@ -1,6 +1,9 @@
 # Use the official Microsoft Playwright image with Node.js and Ubuntu Noble
 FROM mcr.microsoft.com/playwright:v1.49.1-noble
 
+# Switch to root to set up the app directory
+USER root
+
 # Set the working directory
 WORKDIR /app
 
@@ -10,6 +13,12 @@ RUN npm ci
 
 # Copy the rest of the application code
 COPY . .
+
+# Give ownership of /app to pwuser (the default non-root user in the Playwright image)
+RUN chown -R pwuser:pwuser /app
+
+# Switch back to the non-root user
+USER pwuser
 
 # Expose the server port
 EXPOSE 3000
