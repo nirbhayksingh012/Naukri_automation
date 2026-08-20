@@ -399,7 +399,7 @@ app.post('/api/session/import', async (req, res) => {
 });
 
 // Start express server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   logMessage(`Naukri Auto-Updater Service running at http://localhost:${PORT}`, 'success');
   logMessage('Open the link above in your web browser to access the control panel dashboard.', 'info');
 
