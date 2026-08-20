@@ -1,0 +1,15 @@
+{
+  "name": "naukri-profile-autoupdater",
+  "version": "1.0.0",
+  "description": "Automated Naukri profile refresher with modern dark mode dashboard control panel.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "playwright": "^1.49.1"
+  },
+  "author": "Antigravity Pair Program",
+  "license": "MIT"
+}

@@ -1,0 +1,6 @@
+node_modules/
+user_data/
+diagnostic_error.png
+config.json
+.DS_Store
+npm-debug.log*
