@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { updateProfile, launchLoginHelper, exportSessionState } = require('./automation');
 
 const app = express();
@@ -18,7 +19,7 @@ if (process.env.NAUKRI_SESSION_JSON) {
   }
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // State variables
@@ -77,6 +78,72 @@ function saveConfig() {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
   } catch (err) {
     console.error('Failed to save config.json', err);
+  }
+}
+
+// ─── Render Session Persistence ────────────────────────────────────────────────
+
+/**
+ * Sync the current state.json to Render's NAUKRI_SESSION_JSON env var.
+ * This ensures fresh cookies survive container restarts on Render's
+ * ephemeral filesystem. Silently skips if RENDER_API_KEY or
+ * RENDER_SERVICE_ID are not set.
+ */
+async function persistSessionToRender() {
+  const apiKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+
+  if (!apiKey || !serviceId) {
+    return; // Not configured — running locally or on another platform
+  }
+
+  if (!fs.existsSync(STATE_FILE)) {
+    logMessage('No state.json found to sync to Render.', 'warning');
+    return;
+  }
+
+  try {
+    const sessionData = fs.readFileSync(STATE_FILE, 'utf8');
+
+    // Render API: PUT /v1/services/{id}/env-vars/{key}
+    // Updates a single env var without touching others
+    const body = JSON.stringify({ envVarValue: sessionData });
+
+    const options = {
+      hostname: 'api.render.com',
+      path: `/v1/services/${serviceId}/env-vars/NAUKRI_SESSION_JSON`,
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+
+    return new Promise((resolve) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            logMessage('☁️ Session cookies synced to Render (will survive restarts).', 'success');
+          } else {
+            logMessage(`☁️ Render sync failed: HTTP ${res.statusCode} — ${data.substring(0, 200)}`, 'warning');
+          }
+          resolve();
+        });
+      });
+
+      req.on('error', (err) => {
+        logMessage(`☁️ Render sync error: ${err.message}`, 'warning');
+        resolve();
+      });
+
+      req.write(body);
+      req.end();
+    });
+  } catch (err) {
+    logMessage(`☁️ Session persistence error: ${err.message}`, 'warning');
   }
 }
 
@@ -187,6 +254,7 @@ async function performUpdate() {
       config.lastRunStatus = 'success';
       config.currentHeadline = result.headline;
       logMessage(`Autopilot profile update completed successfully!`, 'success');
+      await persistSessionToRender();
     } else {
       config.lastRunStatus = result.error;
       logMessage(`Autopilot profile update failed with error: ${result.error}`, 'error');
@@ -336,6 +404,7 @@ async function performManualUpdate() {
       config.lastRunStatus = 'success';
       config.currentHeadline = result.headline;
       logMessage(`Manual profile update completed successfully!`, 'success');
+      await persistSessionToRender();
     } else {
       config.lastRunStatus = result.error;
       logMessage(`Manual profile update failed: ${result.error}`, 'error');
@@ -400,6 +469,7 @@ app.post('/api/session/export', async (req, res) => {
     fs.writeFileSync(STATE_FILE, JSON.stringify(sessionState, null, 2), 'utf8');
     
     logMessage('Session state exported successfully.', 'success');
+    await persistSessionToRender();
     res.json({ success: true, sessionState });
   } catch (err) {
     logMessage(`Session export failed: ${err.message}`, 'error');
@@ -426,6 +496,7 @@ app.post('/api/session/import', async (req, res) => {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(sessionState, null, 2), 'utf8');
     logMessage('New session state imported successfully! Pre-loaded state.json.', 'success');
+    await persistSessionToRender();
     res.json({ success: true, message: 'Session imported successfully.' });
   } catch (err) {
     logMessage(`Session import failed: ${err.message}`, 'error');
@@ -437,6 +508,13 @@ app.post('/api/session/import', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   logMessage(`Naukri Auto-Updater Service running at http://localhost:${PORT}`, 'success');
   logMessage('Open the link above in your web browser to access the control panel dashboard.', 'info');
+
+  // Log session persistence status
+  if (process.env.RENDER_API_KEY && process.env.RENDER_SERVICE_ID) {
+    logMessage('☁️ Render session persistence enabled. Fresh cookies will auto-sync to env vars after each update.', 'success');
+  } else {
+    logMessage('Render session persistence not configured. Set RENDER_API_KEY + RENDER_SERVICE_ID to auto-sync cookies across restarts.', 'info');
+  }
 
   // Auto-start scheduler if enabled on startup
   if (config.enabled) {

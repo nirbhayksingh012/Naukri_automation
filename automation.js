@@ -5,13 +5,226 @@ const fs = require('fs');
 const USER_DATA_DIR = path.join(__dirname, 'user_data');
 const STATE_FILE = path.join(__dirname, 'state.json');
 
+// ─── Human-like helpers ───────────────────────────────────────────────────────
+
+/**
+ * Random delay between min and max milliseconds (simulates human hesitation).
+ */
+function randomDelay(min = 800, max = 2000) {
+  return Math.floor(Math.random() * (max - min) + min);
+}
+
+/**
+ * Type text character-by-character with random inter-key delays.
+ */
+async function humanType(page, selector, text, log) {
+  await page.click(selector);
+  await page.waitForTimeout(randomDelay(300, 600));
+
+  // Triple-click to select all existing text, then delete
+  await page.click(selector, { clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(randomDelay(200, 400));
+
+  for (const char of text) {
+    await page.keyboard.type(char, { delay: randomDelay(50, 150) });
+  }
+}
+
+/**
+ * Move mouse to element in a human-like way before clicking.
+ */
+async function humanClick(page, selector) {
+  const element = page.locator(selector).first();
+  const box = await element.boundingBox();
+  if (box) {
+    // Move to a random point within the element
+    const x = box.x + box.width * (0.3 + Math.random() * 0.4);
+    const y = box.y + box.height * (0.3 + Math.random() * 0.4);
+    await page.mouse.move(x, y, { steps: Math.floor(Math.random() * 10) + 5 });
+    await page.waitForTimeout(randomDelay(100, 300));
+  }
+  await element.click();
+}
+
+// ─── Auto-Login ───────────────────────────────────────────────────────────────
+
+/**
+ * Automatically log in to Naukri using email/password from environment variables.
+ * Returns true on success, false if credentials are missing or login fails.
+ *
+ * @param {import('playwright').Page} page
+ * @param {Function} log
+ * @returns {Promise<boolean>}
+ */
+async function autoLogin(page, log) {
+  const email = process.env.NAUKRI_EMAIL;
+  const password = process.env.NAUKRI_PASSWORD;
+
+  if (!email || !password) {
+    log('AUTO-LOGIN: NAUKRI_EMAIL or NAUKRI_PASSWORD env vars not set. Cannot auto-login.', 'warning');
+    return false;
+  }
+
+  log('AUTO-LOGIN: Credentials found. Attempting automatic login...', 'info');
+
+  try {
+    // Navigate to the login page
+    const currentUrl = page.url();
+    if (!currentUrl.includes('nlogin/login') && !currentUrl.includes('login')) {
+      await page.goto('https://www.naukri.com/nlogin/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000
+      });
+    }
+
+    await page.waitForTimeout(randomDelay(2000, 3000));
+
+    // Wait for the email input field
+    log('AUTO-LOGIN: Waiting for login form...', 'info');
+    try {
+      await page.waitForSelector('input[placeholder*="Email" i], input[type="email"], #usernameField', { timeout: 15000 });
+    } catch (e) {
+      log('AUTO-LOGIN: Login form did not appear. Page might have redirected.', 'warning');
+      // Check if we're already logged in
+      if (page.url().includes('mnjuser/') || page.url().includes('homepage')) {
+        log('AUTO-LOGIN: Already logged in! Proceeding.', 'success');
+        return true;
+      }
+      return false;
+    }
+
+    // Find the email field (Naukri uses different selectors across versions)
+    const emailSelectors = [
+      'input[placeholder*="Email" i]',
+      'input[type="email"]',
+      '#usernameField',
+      'input[name="username"]'
+    ];
+
+    let emailSelector = null;
+    for (const sel of emailSelectors) {
+      if (await page.locator(sel).first().isVisible().catch(() => false)) {
+        emailSelector = sel;
+        break;
+      }
+    }
+
+    if (!emailSelector) {
+      log('AUTO-LOGIN: Could not find email input field.', 'error');
+      return false;
+    }
+
+    // Type email with human-like delays
+    log('AUTO-LOGIN: Typing email address...', 'info');
+    await humanType(page, emailSelector, email, log);
+    await page.waitForTimeout(randomDelay(500, 1000));
+
+    // Find and type password
+    const passwordSelectors = [
+      'input[placeholder*="Password" i]',
+      'input[type="password"]',
+      '#passwordField',
+      'input[name="password"]'
+    ];
+
+    let passwordSelector = null;
+    for (const sel of passwordSelectors) {
+      if (await page.locator(sel).first().isVisible().catch(() => false)) {
+        passwordSelector = sel;
+        break;
+      }
+    }
+
+    if (!passwordSelector) {
+      log('AUTO-LOGIN: Could not find password input field.', 'error');
+      return false;
+    }
+
+    log('AUTO-LOGIN: Typing password...', 'info');
+    await humanType(page, passwordSelector, password, log);
+    await page.waitForTimeout(randomDelay(800, 1500));
+
+    // Find and click login/submit button
+    const loginBtnSelectors = [
+      'button[type="submit"]',
+      'button:has-text("Login")',
+      'button:has-text("login")',
+      'button:has-text("Sign In")',
+      'button.loginButton',
+      'input[type="submit"]'
+    ];
+
+    let loginBtnSelector = null;
+    for (const sel of loginBtnSelectors) {
+      if (await page.locator(sel).first().isVisible().catch(() => false)) {
+        loginBtnSelector = sel;
+        break;
+      }
+    }
+
+    if (!loginBtnSelector) {
+      log('AUTO-LOGIN: Could not find login button. Trying Enter key instead...', 'warning');
+      await page.keyboard.press('Enter');
+    } else {
+      log('AUTO-LOGIN: Clicking login button...', 'info');
+      await humanClick(page, loginBtnSelector);
+    }
+
+    // Wait for navigation after login
+    log('AUTO-LOGIN: Waiting for post-login navigation...', 'info');
+    await page.waitForTimeout(randomDelay(5000, 7000));
+
+    const postLoginUrl = page.url();
+    log(`AUTO-LOGIN: Post-login URL: ${postLoginUrl}`, 'info');
+
+    // Check for CAPTCHA or OTP
+    const hasCaptcha = await page.locator('[class*="captcha" i], [id*="captcha" i], iframe[src*="recaptcha"]').first().isVisible().catch(() => false);
+    if (hasCaptcha) {
+      log('AUTO-LOGIN: CAPTCHA detected! Auto-login cannot solve CAPTCHAs. Please import a valid session manually.', 'error');
+      return false;
+    }
+
+    const hasOtp = await page.locator('input[placeholder*="OTP" i], input[placeholder*="otp" i], [class*="otp" i]').first().isVisible().catch(() => false);
+    if (hasOtp) {
+      log('AUTO-LOGIN: OTP verification required! Auto-login cannot handle OTPs. Please import a valid session manually.', 'error');
+      return false;
+    }
+
+    // Check if still on login page (means credentials were wrong)
+    if (postLoginUrl.includes('nlogin/login') || postLoginUrl.includes('login')) {
+      // Check for error messages
+      const errorMsg = await page.locator('.err-message, .error-message, [class*="error" i]').first().textContent().catch(() => '');
+      if (errorMsg) {
+        log(`AUTO-LOGIN: Login failed — ${errorMsg.trim()}`, 'error');
+      } else {
+        log('AUTO-LOGIN: Still on login page. Credentials may be incorrect or additional verification needed.', 'error');
+      }
+      return false;
+    }
+
+    // Success! We're past the login page
+    log('AUTO-LOGIN: Login successful!', 'success');
+    return true;
+
+  } catch (error) {
+    log(`AUTO-LOGIN: Exception during login — ${error.message}`, 'error');
+    return false;
+  }
+}
+
+// ─── Profile Update ───────────────────────────────────────────────────────────
+
 /**
  * Perform the Naukri profile update.
+ * If the session is expired, attempts auto-login before retrying.
+ *
  * @param {Function} log - Callback function to stream logs back to the server/UI
  * @param {boolean} headless - Whether to run the browser in headless mode
+ * @param {boolean} _isRetry - Internal flag to prevent infinite retry loops
  * @returns {Promise<{success: boolean, error?: string, headline?: string}>}
  */
-async function updateProfile(log, headless = true) {
+async function updateProfile(log, headless = true, _isRetry = false) {
   let browserContext = null;
   try {
     log('Launching browser context...');
@@ -75,14 +288,41 @@ async function updateProfile(log, headless = true) {
     // Short wait for client-side routing / redirection
     await page.waitForTimeout(4000);
 
-    const currentUrl = page.url();
+    let currentUrl = page.url();
     log(`Current Page URL: ${currentUrl}`);
 
     // Check if redirected to Login page
     if (currentUrl.includes('nlogin/login') || currentUrl.includes('login')) {
-      log('WARNING: Authentication required. User is not logged in or session has expired.', 'warning');
-      await browserContext.close();
-      return { success: false, error: 'auth_required' };
+      if (_isRetry) {
+        // Already retried once after auto-login, don't loop
+        log('Session still expired after auto-login attempt. Giving up.', 'error');
+        await browserContext.close();
+        return { success: false, error: 'auth_required' };
+      }
+
+      log('Session expired. Attempting automatic re-login...', 'warning');
+      const loginOk = await autoLogin(page, log);
+
+      if (loginOk) {
+        // Save the fresh session state
+        try {
+          const state = await browserContext.storageState();
+          fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+          log('Fresh session state saved after auto-login.', 'success');
+        } catch (saveErr) {
+          log(`Warning: Could not save session after login: ${saveErr.message}`, 'warning');
+        }
+
+        await browserContext.close();
+
+        // Retry the whole profile update with fresh cookies
+        log('Retrying profile update with fresh session...', 'info');
+        return updateProfile(log, headless, true);
+      } else {
+        log('Auto-login failed. Manual session import required.', 'error');
+        await browserContext.close();
+        return { success: false, error: 'auth_required' };
+      }
     }
 
     log('Detecting profile layout type...');
