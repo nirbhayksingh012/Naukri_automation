@@ -26,7 +26,10 @@ EXPOSE 3000
 # Set Node environment
 ENV NODE_ENV=production
 
-# Start the application using xvfb-run
-# xvfb-run runs a virtual X server in memory, allowing headful browsers to run
-# on headless servers (which is required by the script to bypass bot detection).
-CMD ["xvfb-run", "-e", "/dev/stderr", "-a", "node", "server.js"]
+# Make the startup script executable
+RUN chmod +x start.sh
+
+# Start the application using start.sh
+# This starts Xvfb in the background and then launches Node.js immediately,
+# ensuring the HTTP port opens quickly for Render's health check.
+CMD ["./start.sh"]
