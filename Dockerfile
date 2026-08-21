@@ -1,5 +1,5 @@
 # Use the official Microsoft Playwright image with Node.js and Ubuntu Noble
-FROM mcr.microsoft.com/playwright:v1.49.1-noble
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 # Switch to root to set up the app directory
 USER root
